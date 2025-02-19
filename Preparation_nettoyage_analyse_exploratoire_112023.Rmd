@@ -1,0 +1,432 @@
+---
+title: "P11_analyse_donnees"
+output: pdf_document
+date: "2024-11-15"
+---
+
+
+```{r}
+library(tidyverse) # Manipulation de dataframes et affichage de graphiques ggplot
+library(funModeling) # Analyse et nettoyage de données
+library(DataExplorer) # Analyse exploratoire de données
+
+```
+
+
+# Initialisation de la table de collecte des données
+
+Elle comprend les code ISO alpha 3 et les noms de pays en anglais
+
+```{r}
+observations_all = read.csv("data/pays.csv", sep = ";")
+```
+
+# Création des variables
+
+## Importation des données de développement
+
+```{r}
+# Fichier lourd comprenant les indicateurs de développement depuis 50 ans
+ indicateurs_developpement = read.csv("data/indicateurs_developpement.csv", sep = ",")
+```
+
+
+## Population et urbanisation 2021
+
+```{r}
+population = read.csv("data/population.csv", sep = ",")
+temp = population[, c("Code.zone..ISO3.", "Élément" ,"Valeur")]
+temp = pivot_wider(data = temp, values_from = Valeur, names_from = Élément)
+temp$urbanisation = temp$`Population urbaine`/temp$`Population totale`
+temp$`Population rurale` = NULL
+temp$`Population urbaine`= NULL
+colnames(temp) = c("alpha_3","population_2021", "urbanisation_2021")
+temp$population_2021 = temp$population_2021*1000 # Données récupérées en milliers d'habitants
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all, temp, by = "alpha_3", all = TRUE)
+```
+
+
+## Stabilité politique 2022
+
+```{r}
+stabilite_politique = read.csv("data/stabilite_politique.csv", sep = ",")
+temp = stabilite_politique[, c("Code.zone..ISO3." ,"Valeur")]
+colnames(temp) = c("alpha_3", "stabilite_politique_2022")
+
+# Valeur manquante pour la Chine : reprise de la valeur du projet 10
+temp <- rbind(temp, data.frame(alpha_3 = "CHN", stabilite_politique_2022 = -0.23))
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all, temp, by = "alpha_3", all = TRUE)
+```
+
+
+## Droits de douane 2021
+
+```{r}
+droits_douane = read.csv("data/droits_douane.csv", sep = ",", skip = 4)
+temp = droits_douane[,c("Country.Code","X2021")]
+colnames(temp) = c("alpha_3","droits_douane_moyens_2021")
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all, temp, by = "alpha_3", all = TRUE)
+```
+
+
+## Donnéees de développement
+
+### Dernier indice de Gini
+
+```{r}
+# Récupération de la dernière valeur, année assez variable cara données lacunaires
+temp = indicateurs_developpement[indicateurs_developpement$Indicator.Name == "Gini index",]
+temp = subset(temp, select = -c(Country.Name,Indicator.Name,Indicator.Code))
+colnames(temp) = c("alpha_3", seq(1960, 2023, by=1))
+temp = pivot_longer(temp, cols = seq(2, 65, by=1), names_to = "year", values_to = "index")
+temp = temp %>% 
+  group_by(alpha_3) %>% 
+  summarise(dernier_indice_gini = last(na.omit(index)))
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all,temp, by = "alpha_3", all = TRUE)
+```
+
+
+### Croissance 2023
+
+```{r}
+# Récupération de la dernière valeur, le plus souvent 2023
+temp = indicateurs_developpement[indicateurs_developpement$Indicator.Name == "GDP growth (annual %)",]
+temp = subset(temp, select = -c(Country.Name,Indicator.Name,Indicator.Code))
+
+colnames(temp) = c("alpha_3", seq(1960, 2023, by=1))
+temp = pivot_longer(temp, cols = seq(2, 65, by=1), names_to = "year", values_to = "croissance_pib_2023")
+temp = temp %>% 
+  group_by(alpha_3) %>% 
+  summarise(croissance_pib_2023 = last(na.omit(croissance_pib_2023)))
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all,temp, by = "alpha_3", all = TRUE)
+
+```
+
+ 
+### PIB par habitant 2023
+
+Unité : current US$
+
+```{r}
+# Récupération de la dernière valeur, le plus souvent 2023
+temp = indicateurs_developpement[indicateurs_developpement$Indicator.Name == "GDP per capita (current US$)",]
+temp = subset(temp, select = -c(Country.Name,Indicator.Name,Indicator.Code))
+
+colnames(temp) = c("alpha_3", seq(1960, 2023, by=1))
+temp = pivot_longer(temp, cols = seq(2, 65, by=1), names_to = "year", values_to = "pib_par_habitant_2023")
+temp = temp %>% 
+  group_by(alpha_3) %>% 
+  summarise(pib_par_habitant_2023 = last(na.omit(pib_par_habitant_2023)))
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all,temp, by = "alpha_3", all = TRUE)
+```
+
+
+### PIB
+
+Unité : current US$
+
+```{r}
+
+# Récupération de la dernière valeur, le plus souvent 2023
+temp = indicateurs_developpement[indicateurs_developpement$Indicator.Name == "GDP (current US$)",]
+temp = subset(temp, select = -c(Country.Name,Indicator.Name,Indicator.Code))
+
+colnames(temp) = c("alpha_3", seq(1960, 2023, by=1))
+temp = pivot_longer(temp, cols = seq(2, 65, by=1), names_to = "year", values_to = "pib_2023")
+temp = temp %>% 
+  group_by(alpha_3) %>% 
+  summarise(pib_2023 = last(na.omit(pib_2023)))
+
+# Intégration dans la table de synthèse 
+observations_all = merge(observations_all,temp, by = "alpha_3", all = TRUE)
+```
+
+
+### Densité de population 2021
+
+Calculée à partir de la surface du pays et de la population
+unité : hab/km²
+
+```{r}
+# Récupération de la dernière valeur de la surface du pays
+temp = indicateurs_developpement[indicateurs_developpement$Indicator.Name == "Land area (sq. km)",]
+temp = subset(temp, select = -c(Country.Name,Indicator.Name,Indicator.Code))
+colnames(temp) = c("alpha_3", seq(1960, 2023, by=1))
+temp = pivot_longer(temp, cols = seq(2, 65, by=1), names_to = "year", values_to = "surface_pays")
+temp = temp %>% 
+  group_by(alpha_3) %>% 
+  summarise(surface_pays = last(na.omit(surface_pays)))
+
+# Intégration dans la table de synthèse et calcul
+observations_all = merge(observations_all,temp, by = "alpha_3", all = TRUE)
+observations_all$densite_population_2021 = observations_all$population_2021/observations_all$surface_pays
+observations_all$surface_pays = NULL
+
+```
+
+
+## Disponibilité alimentaire
+
+### Viande de volaille destinée à l'alimentation humaine
+
+Unité : kg par personne et par an et kg par an
+
+```{r}
+# Récupération des valeurs de consommation de volaille par habitant
+dispo_alimentaire =  read.csv("data/dispo_alimentaire.csv", sep = ",")
+temp = dispo_alimentaire[, c("Code.zone..ISO3." ,"Valeur")]
+colnames(temp) = c("alpha_3","kg_volaille_consommee_par_hab_2022")
+
+# Intégration dans la table de synthèse et calcul du total pays
+observations_all = merge(observations_all, temp, by = "alpha_3", all = TRUE)
+observations_all$kg_volaille_consommee_2022 = observations_all$kg_volaille_consommee_par_hab_2022*observations_all$population_2021
+```
+
+
+### Elevage de poulets : poulets abattus (production), poulet abattus par habitant et réserves
+
+par an
+
+```{r}
+# Récupération données de production et de réserves de poulets par pays
+production_reserves =  read.csv("data/production_reserves.csv", sep = ",")
+temp = production_reserves[,c("Code.zone..ISO3.", "Élément" ,"Valeur")]
+temp$Valeur = 1000*temp$Valeur # Données en milliers de têtes de volailles converties en têtes
+temp = pivot_wider(data = temp, values_from = Valeur, names_from = Élément)
+colnames(temp) = c("alpha_3","reserves_poulets_2022", "poulets_abattus_2022")
+
+# Intégration dans la table de synthèse et calcul de la production par habitant
+observations_all = merge(observations_all, temp, by = "alpha_3", all = TRUE)
+observations_all[,c("poulets_abattus_2022_par_hab")] = 
+  observations_all[,c("poulets_abattus_2022")]/observations_all$population_2021
+
+```
+
+
+## Importations de poulets
+
+### Importation et part de la consommation
+
+```{r}
+# Récupération données d'importation de volaille par pays
+importations =  read.csv("data/importations_volaille.csv", sep = ",")
+temp = importations[,c("Code.zone..ISO3.", "Élément" ,"Valeur")]
+temp$Valeur = 1000000*temp$Valeur # kg de volaille
+temp = pivot_wider(data = temp, values_from = Valeur, names_from = Élément)
+colnames(temp) = c("alpha_3","kg_volaille_produite_2022", "kg_volaille_importee_2022")
+temp = subset(temp, select = c(1,3))
+
+
+# Intégration dans la table de synthèse et calcul de la part de la consommation
+observations_all = merge(observations_all, temp , by = "alpha_3", all = TRUE)
+
+observations_all$part_importation_consommation_volaille_2022 = observations_all$kg_volaille_importee_2022 / 
+  observations_all$kg_volaille_consommee_2022
+
+observations_all$part_importation_consommation_volaille_2022 = 
+  replace(observations_all$part_importation_consommation_volaille_2022, 
+          is.na(observations_all$part_importation_consommation_volaille_2022),
+          0)
+```
+
+
+### Importations depuis la France
+
+```{r}
+# Récupération données d'exportations de viande de poulet depuis la France
+export_france =  read.csv("data/exports_fr_poulet.csv", sep = ",")
+temp = export_france[,c("Code.pays.partenaire..ISO3.", "Élément" ,"Produit","Unité", "Valeur")]
+temp$variable = paste(temp$Produit, temp$Élément, temp$Unité, sep=" - ")
+temp = pivot_wider(data = temp[,c("Code.pays.partenaire..ISO3.", "variable", "Valeur")], values_from = Valeur, names_from = variable)
+
+# Identification des variables décrites
+colnames(temp) = c("alpha_3","tetes_poulets_importes_de_france_2022","kg_poulets_importes_de_france_2022",
+                   "valeur_poulets_importes_de_france_2022","kg_viande_poulet_importees_de_france_2022", "valeur_viande_poulet_importee_de_france_2022")
+
+# Aggrégation des valeurs de poulet et de viande de poulet
+temp$kg_poulets_importes_de_france_2022 = temp$kg_poulets_importes_de_france_2022 + temp$kg_viande_poulet_importees_de_france_2022
+temp$valeur_poulets_importes_de_france_2022 = temp$valeur_poulets_importes_de_france_2022 + temp$valeur_viande_poulet_importee_de_france_2022
+
+# Calcul du prix au kg de la viande de poulet dans les transactions
+temp$prix_kg_poulet_importe_de_france_2022 = temp$valeur_poulets_importes_de_france_2022/temp$kg_poulets_importes_de_france_2022
+
+# Conversion des tonnes en kg
+temp$kg_poulets_importes_de_france_2022 = temp$kg_poulets_importes_de_france_2022*1000
+
+# Intégration au jeu de données
+# Valeurs peu fiables pour prix_kg_poulet_importe_de_france_2022
+observations_all = merge(observations_all, temp[,c("alpha_3","kg_poulets_importes_de_france_2022")], by = "alpha_3", all = TRUE)
+observations_all$kg_poulets_importes_de_france_2022 = replace(observations_all$kg_poulets_importes_de_france_2022,  is.na(observations_all$kg_poulets_importes_de_france_2022), 0)
+
+```
+m = mean(observations_all$prix_kg_poulet_importe_de_france_2022, na.rm = TRUE)
+observations_all$prix_kg_poulet_importe_de_france_2022 = replace(observations_all$prix_kg_poulet_importe_de_france_2022,  is.na(observations_all$prix_kg_poulet_importe_de_france_2022), m)
+rm(m)
+
+
+
+# Mise en forme des données
+
+```{r}
+# Suppression de tous les pays où il manque des donneés
+observations = na.omit(observations_all)
+
+# Simplification des noms de colonnes, avec suppression des années
+colnames(observations) = c("alpha_3", "nom_pays",
+                           "population","urbanisation", "stabilite_politique",
+                           "droits_douane", "indice_gini",
+                           "croissance", "pib_par_habitant", "pib",
+                           "densite", "kg_volaille_consommee_par_hab", "kg_volaille_consommee",
+                           "reserves_poulets" ,"poulets_abattus", "poulets_abattus_par_hab",
+                           "kg_volaille_importee", "part_importation_consommation_volaille",
+                           "kg_poulets_importes_de_france"
+                           )
+variables_all = colnames(observations)[-c(1,2)]
+
+# Suppression de la France
+observations = subset(observations, nom_pays != "France")
+
+# Vérification de la population restante
+cat("Part de la population mondiale comprise dans le jeu de données : ")
+cat(sum(observations$population)/7800000000)
+
+cat("\n\nNombre de pays dans le jeu de données : ")
+cat(nrow(observations))
+
+```
+
+
+# Analyse exploratoire
+
+## Médianes et quartiles des vairables
+
+```{r}
+summary(observations)
+```
+
+Population :  médiane 11 millions d'habitants (3ème quartile 34 millions, max 1,4 milliards)
+Densité : médiane 8 hab/km²
+Indice de Gini : médiane 36 (min 24, max 63)
+PIB : médiane 69 milliards de $ -  5 797 $ par habitant (3ème quartile 13 730 $, max 100 000 $)
+Consommation de volaille : médiane 131 000 tonnes - 18 kg par habitant (1er quartile 6 kg - 3ème quartile 30 kg - max 91 kg)
+Importations de volaille : médiane 18 000 tonnes - 18 % de la consommation (3ème quartile 70 % - max 170 %)
+Réserves de poulets : médiane 32 millions
+Production de poulets : médiane 71 millions - 8 par habitant (3ème quartile 17 - max 55 par habitant)
+
+
+## Sélection d'individus remarquables à utiliser comme témoins dans les analyses
+
+Inde et chine : population > 1 milliard
+Belgiques : très fortes importations de poulets de France
+Guyana,	Trinidad and Tobago : très importantes réserves de poulets par habitant
+Indonésie : 2ème réserve de poulets après la Chine
+Suisse : PIB/habitant
+Chine, Japon, UK, Emirats Arabes Unis : très fortes importations de poulets	
+
+```{r}
+# Sélection des pays témoins
+l = c("China", "India", "Belgium", "Trinidad and Tobago", "Indonesia", "Switzerland", "Japan", "United Kingdom of Great Britain and Northern Ireland", "United Arab Emirates", "Solomon Islands", "Burundi")
+
+# Changement de l'ordre des variables pour une mise en valeur des variables les plus importantes
+variables = c("population", "pib_par_habitant", "kg_volaille_consommee_par_hab", "part_importation_consommation_volaille", "kg_volaille_importee", "kg_poulets_importes_de_france", "kg_volaille_consommee",
+                           "reserves_poulets" ,"poulets_abattus", "poulets_abattus_par_hab",
+                          "urbanisation", "stabilite_politique", "droits_douane", "indice_gini",
+                           "croissance", "pib", "densite"
+                           )
+
+# Affichage des variables et pays sélectionnés
+arrange(observations[observations$nom_pays %in% l,], desc(population))[,c("nom_pays", variables)]
+```
+
+On retient 11 pays que l'on catégorise de la manière suivante : 
+- petit à moyen pays, riche et importateur : Belgique, Emirts Arabes Unis, Suisse, Trinidad and Tobago
+- gros pays importateur : Japon, Royaume-Uni, Chine
+- gros pays non importateur : Indonésie, Inde
+- paetit  moyen pays, faiblement importateur : Iles Salomon, Burundi
+
+
+
+## Visualisation de la répartition des valeurs des variables
+
+```{r}
+# Centrage et réduction des variables pour un affichage sur le même graphique des outliers
+rownames(observations) = NULL
+observations.scaled = observations[,-1] %>% 
+  column_to_rownames("nom_pays") %>%
+  mutate(across(where(is.numeric), ~ scale(.)))
+
+# Affichage des valeurs des variables sous forme de boîtes à moustaches avec outliers > 3
+pivot = pivot_longer(data = observations.scaled, cols = all_of(variables_all),  names_to = "variable", values_to = "valeur")
+ggplot(pivot, mapping = aes(x = variable, y = valeur))+
+  geom_boxplot(coef = 3)+
+  coord_flip()
+
+```
+
+On observer de nombreux outliers, situés dans les valeurs supérieures, et une forte concentration des individus vers 0
+
+
+# Construction d'un jeu en échelle logarithmique
+
+On peut observer cette tendance en représentant les nuages de points des individus où simplement leur densité de répartition
+
+```{r}
+# Importations de volaille en fonciton de la population
+ggplot(observations)+
+  geom_point(aes(x=kg_volaille_importee, y = population))+
+  scale_y_continuous(limits = c(0, 3e+08))+
+  scale_x_continuous(limits = c(0, 4e+08))
+
+# Réparitition de densité du PIB par habitant
+ggplot(observations, mapping = aes(x = 1, y = pib_par_habitant))+
+  geom_violin()+
+  geom_boxplot(fill = "steelblue", outlier.colour = "steelblue", coef = 3, width = 0.5, alpha = 0.7)+
+  coord_flip()
+```
+
+A toutes les variables suivant cette réparitition, on applique un logarithme pour espacer les valeurs faibles et rapprocher les outliers.
+On obtiendra une répartition plus homogène des individus, et on pourra former plus facilement des clusters lors de l'analyse. 
+
+```{r}
+observations_log = observations
+observations_log$population = log(observations_log$population)
+observations_log$pib_par_habitant = log(observations_log$pib_par_habitant)
+observations_log$pib = log(observations_log$pib)
+observations_log$kg_volaille_consommee_par_hab = log(observations_log$kg_volaille_consommee_par_hab)
+observations_log$kg_volaille_consommee = log(observations_log$kg_volaille_consommee)
+observations_log$reserves_poulets = log(observations_log$reserves_poulets)
+observations_log$poulets_abattus = log(observations_log$poulets_abattus)
+observations_log$poulets_abattus_par_hab = log(observations_log$poulets_abattus_par_hab)
+observations_log$kg_volaille_importee = log(observations_log$kg_volaille_importee)
+observations_log$kg_poulets_importes_de_france = log(observations_log$kg_poulets_importes_de_france)
+
+# Pour les variables d'importation où il existe des valeurs nulles et donc un logarithme = -inf, on remmplace cette valeur par la plus petite valeur recensée -1 (ordre de grandeur considéré comme négligeable dans les données récoltées)
+observations_log$kg_poulets_importes_de_france = replace(
+  observations_log$kg_poulets_importes_de_france, is.infinite(observations_log$kg_poulets_importes_de_france),
+  5)
+observations_log$kg_volaille_importee = replace(
+  observations_log$kg_volaille_importee,is.infinite(observations_log$kg_volaille_importee),
+  13)
+```
+
+
+# Exportation des données
+
+```{r}
+# Exportation
+write.table(observations, "data/observations.csv", row.names = FALSE, sep = ";") # Observations brutes
+write.table(observations_log, "data/observations_pour_ACP.csv", row.names = FALSE, sep = ";") # Observation modifiées pour ACP (log)
+```
+

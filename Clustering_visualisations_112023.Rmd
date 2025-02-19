@@ -1,0 +1,457 @@
+
+# Importation des librairies et des données
+
+```{r}
+library(shiny)
+library(FactoMineR) # ACP
+library(Factoshiny) # ACP
+library(tibble) # formatage des dataframes
+library(ggpubr) # Customize ggplot
+library(factoextra) # ACP
+library(tidyverse) # Manipulation de dataframes et affichage de graphiques ggplot
+library(reshape2) # Affichage matrice corrélation
+library(stats)  # CAH
+
+observations = read.csv("data/observations.csv", sep = ";") # données brutes pour lecture
+observations_pour_ACP = read.csv("data/observations_pour_ACP.csv", sep = ";") # Données préparées pour l'ACP (log)
+```
+
+
+# ACP
+
+```{r}
+# Centrage et réduction des variables
+observations.scaled = observations_pour_ACP[,-1] %>% 
+  column_to_rownames("nom_pays") %>%
+  mutate(across(where(is.numeric), ~ scale(.)))
+
+# ACP
+observations.PCA = PCA(observations.scaled, graph = FALSE)
+```
+
+
+## Eboulis des valeurs propres
+
+```{r}
+eboulis_valeurs_propres = data.frame(get_eig(observations.PCA))
+dimensions = seq(1, nrow(eboulis_valeurs_propres))
+
+ggplot(eboulis_valeurs_propres, aes(x = dimensions))+
+  scale_x_continuous(breaks = dimensions)+
+  geom_bar(aes(y = variance.percent), stat = "identity", fill = "steelblue")+
+  geom_line(aes(y = cumulative.variance.percent, group = 1), colour = "firebrick")+
+  geom_point(aes(y = cumulative.variance.percent), colour = "firebrick")
+
+```
+
+Coude marqué après 2 dimensions, expliquant 55 % de la variance des données
+On pourra donc réduire l'analyse au 1er plan factoriel
+
+## Cercles des corrélations
+
+```{r}
+gradient_colors = c("grey", "tomato", "violetred4")
+fviz_pca_var(observations.PCA, axes = c(1,2), col.var = "contrib", gradient.cols = gradient_colors, repel = TRUE )
+fviz_pca_var(observations.PCA, axes = c(3,4), col.var = "contrib", gradient.cols = gradient_colors, repel = TRUE )
+
+```
+
+1ère composante principale : 
+PIB, population, consommation et production de poulets, porduction de poulets par habitant
+
+2ème composante principale : 
+PIB par habitant, stabilité politique, consommation de volaille par habitant, part des importations dans la consommation de volaille, (-) droits de douane
+
+La 3ème peut être intéressante à regarder, puisqu'elle est assez corrélées aux importations de France
+
+
+
+## Corrélation entre variables
+
+### Heatmap des coefficients de Pearson
+
+```{r}
+cor_matrix <- cor(observations_pour_ACP[,-c(1,2)], method = "pearson")  # Matrice des coefficients de corrélation de Pearson
+melted_cor <- melt(cor_matrix)
+
+ggplot(data = melted_cor, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2)), size = 3) +
+  scale_fill_gradient2(low = "blue", high = "red", limit = c(-1, 1), name = "Correlation") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_x_discrete(limits=rev)
+```
+
+
+Corrélation forte entre PIB et :
+* population (0,79)
+* Production de poulets (0,88)
+* Réserves de poulets (0,82)
+* Consommation de volaille (0,89)
+
+Corrélation entre PIB et : 
+* importations de volaille (0,34)
+* (-) Part des importations dans la consommation de volaille (-0,45)
+* (-) Droits de douane (-0,33)
+
+Nota : corrélation nulle (0,1) entre population et importations de volaille.
+On préfèrera s’appuyer sur le PIB que sur la population pour caractériser la taille du pays
+
+
+### Nuages de points
+
+On considère en particulier la relation entre PIB et PIB/hab d'une part (1ers axes résulats de l'ACP), et volumes d'importations de volaille et importations/consommation d'autre part
+
+```{r}
+ggplot(observations_pour_ACP, aes(x= pib, y=  kg_volaille_importee, label=nom_pays))+
+  geom_point() +geom_text(hjust=0, vjust=0)+
+  ggtitle("Quantités de volaille importée (log) en fonction du PIB (log)") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(observations_pour_ACP, aes(x= pib_par_habitant, y=  kg_volaille_importee, label=nom_pays))+
+  geom_point() +geom_text(hjust=0, vjust=0)+
+  ggtitle("Quantités de volaille importée (log) en fonction du PIB par habitant (log)") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(observations_pour_ACP, aes(x= pib, y=  part_importation_consommation_volaille, label=nom_pays))+
+  geom_point() +geom_text(hjust=0, vjust=0)+
+  ggtitle("Part des importations de volaille de la consommation en fonction du PIB (log)") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(observations_pour_ACP, aes(x= pib_par_habitant, y=  part_importation_consommation_volaille, label=nom_pays))+
+  geom_point() +geom_text(hjust=0, vjust=0)+
+  ggtitle("Part des importations de volaille de la consommation en fonction du PIB par habitant (log)") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Coefficient de Pearson entre les variables : 
+Volaille importée et PIB : c = 0,34
+Part des importations et PIB : c = -0.45
+Volaille importée et PIB/hab : c = 0.41
+Part des importations et PIB/hab : c = 0.05
+
+Les gros pays importent plus, mais moins en proportion de leur consommation
+Les pays riches importent plus, mais pas nécessairement en proportion de leur consommation
+
+On note que certains pays à fort PIB ou fort PIB ressortent du nuage de points, notamment en raison de faibles importations
+
+
+
+## Projection des individus sur les 2 premiers plans factoriels
+
+```{r}
+fviz_pca_ind(observations.PCA, axes = c(1,2), label = "ind", col.ind = "cos2", labelsize=3,  gradient.cols = gradient_colors)+
+  ggtitle("Individus projetés sur le 1er plan factoriel")
+fviz_pca_ind(observations.PCA, axes = c(1,2), label = "ind", select.ind = list(contrib = 30), labelsize=3)+
+  ggtitle("30 plus importants contributeurs projetés sur le 1er plan factoriel")
+
+fviz_pca_ind(observations.PCA, axes = c(3,4), label = "ind", col.ind = "cos2", labelsize=3,  gradient.cols = gradient_colors)+
+  ggtitle("Individus projetés sur le 2ème plan factoriel")
+fviz_pca_ind(observations.PCA, axes = c(3,4), label = "ind", labelsize=3, select.ind = list(contrib = 30))+
+  ggtitle("30 plus importants contributeurs projetés sur le 2ème plan factoriel")
+
+```
+
+On retrouve sur la partie droite du 1er plan factoriel les pays ayant le plus fort PIB ("gros pays"), et sur la partie haute les pays ayant le plus fort PIB/habitant ("pays riches"). On sera intéressés par ces deux zones, avec un préférence pour les pays "riches", probablement plus acheteurs de produits biologiques, et  plus raisonnables en terme de taille pour un lancement à l'export d'une PME.
+
+On peut retrouver sur la droite du 2ème plan factoriel les pays ayant de forte importations depuis la France
+
+
+## Contribution des individus et variables aux 2 premières composantes principales
+
+```{r}
+fviz_contrib(observations.PCA, choice = "ind", axes = c(1), top = 20)
+fviz_contrib(observations.PCA, choice = "ind", axes = c(2), top = 20)
+fviz_contrib(observations.PCA, choice = "ind", axes = c(3), top = 20)
+fviz_contrib(observations.PCA, choice = "var", axes = c(1))
+fviz_contrib(observations.PCA, choice = "var", axes = c(2))
+fviz_contrib(observations.PCA, choice = "var", axes = c(3))
+
+```
+
+
+# Classification ascendante hiérarchique
+
+```{r}
+# Création d'une matrice de distance
+distance <- dist(observations.scaled)
+
+# Réalisation de la CAH méthode Ward.D, qui minimise la variance à l'intérieur de chaque cluster
+cah <- hclust(distance, method = "ward.D")
+plot(cah, main = "Arbre de classification - méthode ward.D")
+
+```
+
+
+Affichage des 3 clusters optimaux sur l'arbre et sur le premier plan factoriel
+
+
+```{r}
+library(ape)
+colors = c("springgreen3", "#E7B800", "#FC4E07","maroon4","turquoise","burlywood4","seagreen","purple","firebrick", "grey","greenyellow","steelblue4","pink")
+
+# Fonction déterminant le clustering optimal selon la forte perte d'inertie observée
+best.cutree <-
+  function(hc, min = 3, max = 20, loss = FALSE, graph = FALSE, ...) {
+    if (!inherits(hc, "hclust")) hc <- as.hclust(hc)
+    max <- min(max, length(hc$height))
+    inert.gain <- rev(hc$height)
+    intra <- rev(cumsum(rev(inert.gain)))
+    relative.loss <- intra[min:(max)] / intra[(min - 1):(max - 1)]
+    best <- which.min(relative.loss)
+    names(relative.loss) <- min:max
+    if (graph) {
+      temp <- relative.loss
+      temp[best] <- NA
+      best2 <- which.min(temp)
+      pch <- rep(1, max - min + 1)
+      pch[best] <- 16
+      pch[best2] <- 21
+      plot(min:max, relative.loss, pch = pch, bg = "grey75", ...)
+    }
+    if (loss) {
+      relative.loss
+    } else {
+      best + min - 1
+    }
+  }
+
+# Découpage en clusters selon le nombre optimal
+n = best.cutree(cah) # Nombre optimal de clusters
+cah_clusters_optimal = cutree(cah, n)
+plot(as.phylo(cah), tip.color = colors[cah_clusters_optimal], label.offset = 0.5, cex = 0.7)
+
+# Affichage des 3 clusters sur le premier plan factoriel
+cah_clusters = as.character(cah_clusters_optimal)
+observations.scaled = observations_pour_ACP[,-1] %>% 
+  column_to_rownames("nom_pays") %>%
+  mutate(across(where(is.numeric), ~ scale(.)))
+observations.scaled.clusters = cbind(observations.scaled, cah_clusters_optimal)
+observations.PCA.clusters = PCA(observations.scaled.clusters, quali.sup=18, graph = FALSE )
+fviz_pca_ind(observations.PCA.clusters, axes = c(1,2), habillage = 18, label = "ind", labelsize=3, addEllipse = TRUE, ellipse.type = "convex", palette = colors)
+```
+
+```{r}
+# Affichage des moyennes par cluster de la cah(n=3)
+# observations.groups =  cbind(cah_clusters=cah_clusters_optimal, subset(observations, select = -c(nom_pays, alpha_3)))
+observations.groups =  cbind(cah_clusters=as.numeric(cah_clusters_optimal), subset(observations, select = c(pib, pib_par_habitant, kg_volaille_importee, population)))
+
+list.observations.groups <- split(observations.groups,cah_clusters, drop = TRUE)
+cluster_mean = as.data.frame(t(as.data.frame(lapply(list.observations.groups,colMeans))))
+row.names(cluster_mean) = NULL
+arrange(cluster_mean, cah_clusters)
+```
+
+
+Les cluster peuvent être caractérisés ainsi :
+Cluster 1 : PIB moyen, faible PIB/habitant
+Valeurs moyennes : 
+- PIB : 160 milliards de $
+- PIB par habitant : 1 600 $
+- Importations de volaille : 28 000 tonnes
+
+Cluster 2 : Fort PIB, fort PIB par habitant
+- PIB : 1 100 milliards de $
+- PIB par habitant : 22 000 $
+- Importations de volaille : 120 000 tonnes
+
+Cluster 3 : Faible PIB, PIB par habitant moyen
+- PIB : 5,3 milliards de $
+- PIB par habitant : 5 700 $
+- Importations de volaille : 12 000 tonnes
+
+
+On s’intéressera en priorité au 2ème cluster, caractérisé par un plus fort PIB et PIB par habitant.
+
+La méthode cible cependant trop de pays : il y a besoin d’affiner le clustering
+
+
+
+# Clustering par le k-means
+
+Détermination du nombre optimal de clusters pour l'algorithem du kmeans par la méthode de la silouhette
+
+Silhouette : différence entre la distance moyenne avec les points du même groupe que lui (cohésion) et la distance moyenne avec les points des autres groupes voisins (séparation)
+
+```{r}
+factoextra::fviz_nbclust(observations.scaled, FUNcluster =kmeans, method = "silhouette")
+```
+
+On obtient un optimal à 4 clusters
+La définition de 2 ou 3 clusters serait possible, mais il est préférable de choisir 4 clusters pour distinguer au mieux les caractéristiques des pays
+
+
+```{r}
+set.seed(123)
+km <- kmeans(observations.scaled, 4, nstart = 50)
+
+#cluster_colors = c("darkgreen", "orange", "red", "royalblue")
+
+#km$cluster Clustering K-means montrant le groupe de chaque individu
+fviz_cluster(km, data = observations.scaled,
+             geom = c("point", "text"),
+             ellipse.type = "convex", 
+             ggtheme = theme_bw(),
+             axes = c(1,2)
+             )+
+  scale_colour_manual(values = colors)+
+  scale_fill_manual(values = colors)+
+  ggtitle("Clusters obtenus par k-means projetés sur le 1er plan factoriel")
+
+fviz_cluster(km, data = observations.scaled,
+             geom = c("point", "text"),
+             ellipse.type = "convex", 
+             ggtheme = theme_bw(),
+             axes = c(3,4)
+             )+
+  scale_colour_manual(values = colors)+
+  scale_fill_manual(values = colors)+
+  ggtitle("Clusters obtenus par k-means projetés sur le 2ème plan factoriel")
+
+
+# Affichage du classement par le kmeans dans l'arbre de CAH
+plot(as.phylo(cah), tip.color = colors[km$cluster], label.offset = 0.5, cex = 0.7, main= "Affichage des clusters obtenus par k-means dans l'arbe de CAH")
+legend(90, 120, legend=c("1 - Faible PIB/hab", "2 - Fort PIB/hab", "3 - Faible PIB", "4 - Fort PIB"),
+       col=colors, lty=1, cex=0.8, title = "Cluster")
+
+```
+4 clusters sont identifiés, de taille comparable, peu disjoints 
+Chaque cluster suit bien un axe, et correspond à une typologie que l’on souhaitait identifier (richesse et taille du pays)
+
+Cluster 1 : Faible PIB/hab
+Cluster 2 : Pays à fort PIB/habitant, très consommateurs et important beaucoup
+Cluster 3 : Petits pays plutôt riches riches, consommant mais représentant un faible volume d'importations
+Cluster 4 : Gros pays consommateurs, mais produisant beaucoup et important peu en proportion
+
+Ce sont les clusters 2 et 4 qui seront à privilégier
+
+
+Données agrégées par cluster :
+
+```{r}
+km_cluster = km$cluster
+observations.groups =  cbind(cluster=km_cluster, subset(observations, select = c(population, pib, pib_par_habitant, kg_volaille_importee, part_importation_consommation_volaille)))
+
+list.observations.groups = split(observations.groups,km_cluster) # Séparation en une liste de dataframes par cluster
+list.observations.groups = lapply(list.observations.groups,  function(x) x[ , -1]) # Suppression de la colonne cluster pour les calculs
+cluster_mean = as.data.frame(t(as.data.frame(lapply(list.observations.groups,colMeans))))
+cluster_sum = as.data.frame(t(as.data.frame(lapply(list.observations.groups,colSums))))
+cluster_sum$part_population = (cluster_sum$population)/sum(cluster_sum$population)
+cluster_sum$part_importations = (cluster_sum$kg_volaille_importee)/sum(cluster_sum$kg_volaille_importee)
+
+
+cluster_mean
+cluster_sum
+```
+
+
+Population et importations mondiales comprises dans les clusters 2 et 4 :
+
+Cluster 2 (fort PIB/hab) : 29 pays sur 121
+  210 millions d'habitants soit 31 % du jeu de données
+  2,2 millions de tonnes de volaille importées, soit 23 % du jeu de données
+  
+Cluster 4 (fort PIB) : 35 pays sur 121
+  3,5 milliards d'habitants soit 53 % du jeu de données 
+  6 millions de tonnes de volaille importées, soit 62 % du jeu de données
+  
+  
+L’algorithme du k-means permet de dégrossir les pays les plus intéressants, que l’on recherche des pays riches ou de grande taille.
+Le cluster 2 serait à retenir dans le cadre d’une recherche de client à fort pouvoir d’achat
+
+Cependant, si l’on souhaite cibler un nombre restreint de pays, il est nécessaire de former des clusters plus petits.
+
+
+# CAH avec 12 clusters
+
+Les clusters obtenus par CAH comme par le k-means comportent trop de pays (plus de 30) pour être utilisés tels quels.
+Afin d'affiner la sélection des pays à retenir pour l'export de poulets biologiques, nous allons former de plus petits clusters à partir de l'arbre de classification ascendante hiérarchique. 
+La méthode de Ward utilisée pour la CAH assure de minimiser l'inertie intraclasse, contrairement à celui du k-means qui peut intégrer facilement un outlier dans un cluster. On obtient donc des cluster compacts.
+
+```{r}
+# On choisit un nombre de clusters correpondant à une moyenne de 10 individus par cluster, plus faciles à manier comme résultat
+cah_clusters_small = cutree(cah, 12)
+# Distance maximale dans un cluster
+d = sort(cah$height, decreasing = TRUE)[12]
+cat("Distance maximale dans un cluster : ")
+cat(d)
+
+
+plot(cah, main = "Arbre de classification - méthode ward.D")
+abline(h = d, lty = 2)
+plot(as.phylo(cah), tip.color = colors[cah_clusters_small], label.offset = 0.5, cex = 0.7, main = "Arbre de classification ascendante hiérarchique découpé en 12 clusters")
+legend(90, 120, legend=c(1,10,11,12,2,3,4,5,6,7,8,9),
+       col=colors, lty=1, cex=0.8, title = "Cluster")
+
+# Affichage des 12 clusters sur les 2 plans factoriels
+cluster = as.character(cah_clusters_small)
+
+# intégration du cluster dans le jeu de données centrées réduites puis l'ACP
+observations.scaled.cluster = cbind(observations.scaled, cluster)
+observations.PCA.clusters = PCA(observations.scaled.cluster, quali.sup="cluster", graph = FALSE)
+# 1er plan factoriel
+fviz_pca_ind(observations.PCA.clusters, axes = c(1,2), habillage = "cluster", label = "ind",
+             labelsize=3, addEllipse = TRUE, ellipse.type = "convex", palette = colors)+
+  ggtitle("12 Clusters obtenus par CAH projetés sur le 1er plan factoriel") +
+  theme(plot.title = element_text(hjust = 0.5))
+# 2ème plan factoriel
+fviz_pca_ind(observations.PCA.clusters, axes = c(3,4), habillage = "cluster", label = "ind",
+             labelsize=3, addEllipse = TRUE, ellipse.type = "convex", palette = colors)+
+  ggtitle("12 Clusters obtenus par CAH projetés sur le 2eme plan factoriel") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Les cluster 3 et 6 se positionnent bien, en termes de PIB/habitant d'abord, puis en terme de PIB
+On vérifie certaines valeurs moyenne sur l'ensemble des clusters pour s'assurer que les cluster préselctionnés présentent des chiffres intéressants.
+
+
+```{r}
+# Affichage des moyennes  et sommes par cluster 
+observations.groups =  cbind(cluster=cah_clusters_small, subset(observations, select = c(population, pib, pib_par_habitant, kg_volaille_importee, part_importation_consommation_volaille)))
+
+list.observations.groups = split(observations.groups,cah_clusters_small) # Séparation en une liste de dataframes par cluster
+list.observations.groups = lapply(list.observations.groups,  function(x) x[ , -1]) # Suppression de la colonne cluster pour les calculs
+cluster_mean = as.data.frame(t(as.data.frame(lapply(list.observations.groups,colMeans))))
+cluster_sum = as.data.frame(t(as.data.frame(lapply(list.observations.groups,colSums))))
+cluster_sum$part_population = (cluster_sum$population)/sum(cluster_sum$population)
+cluster_sum$part_importations = (cluster_sum$kg_volaille_importee)/sum(cluster_sum$kg_volaille_importee)
+
+cluster_mean
+cluster_sum
+cat()
+```
+
+On confirme le très bon positionnement des clusters 3 et 6 en valeurs moyennes :
+* les 1ère places en PIB par habitant
+* la 3ème et la 1ère place en volume d'importations
+* les 4ème et 2ème places en PIB
+* une place moyenne en importations/consommation avec 50%, ce qui assure un marché solide
+
+
+Cluster 3 : 8 pays
+  * 32 millions d'habitants (0.5 % de la population)
+  * 900 000 tonnes d'importations de volaille (9% des importations )
+  
+Cluster 6 : 9 pays
+  * 340 millions d'habitants (5% de la population)
+  * 3 100 000 tonnes d'importations de volaille (32 % des importations)
+
+# Pays retenus dans le cadre de l'étude
+
+On retient les clusters 3 et 6 obtenus par le clustering par CAH avec 12 clusters, représentant 17 pays :
+
+```{r}
+# Affichage des clusters 3 et 6
+
+cat("Cluster 3 : \n\n")
+names(which(cah_clusters_small == 3))
+cat("\n\nCluster 6 : \n\n")
+names(which(cah_clusters_small == 6))
+
+```
+
